@@ -3,8 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,7 +32,7 @@ func main() {
 		log.Fatalf("Fatal error: %s\n", err)
 	}
 
-	deftempdir, err := ioutil.TempDir("", "bookbrowser")
+	deftempdir, err := os.MkdirTemp("", "bookbrowser")
 	if err != nil {
 		deftempdir = filepath.Join(workdir, "_temp")
 	}
@@ -40,6 +41,7 @@ func main() {
 	tempdir := pflag.StringP("tempdir", "t", deftempdir, "the directory to store temp files such as cover thumbnails (created on start, deleted on exit unless already exists)")
 	addr := pflag.StringP("addr", "a", ":8090", "the address to bind the server to ([IP]:PORT)")
 	nocovers := pflag.BoolP("nocovers", "n", false, "do not index covers")
+	socketPath := pflag.StringP("sock", "s", filepath.Join(workdir, "bookbrowser.socket"), "path of the socket to listen to")
 	help := pflag.BoolP("help", "h", false, "Show this help text")
 	sversion := pflag.Bool("version", false, "Show the version")
 	pflag.Parse()
@@ -129,6 +131,25 @@ func main() {
 		s.RefreshBookIndex()
 	})
 
+	go func() {
+		l, err := net.Listen("unix", *socketPath)
+		if err != nil {
+			println("listen error", err.Error())
+			return
+		}
+
+		os.Chmod(*socketPath, 0777)
+		for {
+			fd, err := l.Accept()
+			if err != nil {
+				println("accept error", err.Error())
+				return
+			}
+			s.RefreshBookIndex()
+			fd.Close()
+		}
+	}()
+
 	err = s.Serve()
 	if err != nil {
 		log.Fatalf("Error starting server: %s\n", err)
@@ -142,7 +163,7 @@ func checkUpdate() {
 	}
 	defer resp.Body.Close()
 
-	buf, err := ioutil.ReadAll(resp.Body)
+	buf, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return
 	}
